@@ -11,6 +11,8 @@
 
 const GCS_BASE  = import.meta.env.VITE_GCS_BASE_URL  || `${import.meta.env.BASE_URL}sample-data`
 const API_BASE  = import.meta.env.VITE_API_BASE_URL   || null
+const COMPLETE_ACTION_URL = import.meta.env.VITE_COMPLETE_ACTION_URL
+  || 'https://us-central1-water4-org.cloudfunctions.net/fis-complete-action'
 
 export async function fetchDonors() {
   const r = await fetch(`${GCS_BASE}/donors/latest.json`)
@@ -27,6 +29,24 @@ export async function fetchCampaigns() {
 export async function fetchActions() {
   const r = await fetch(`${GCS_BASE}/actions/latest.json`)
   if (!r.ok) throw new Error(`Failed to load actions: ${r.status}`)
+  return r.json()
+}
+
+/**
+ * Mark a gift officer action as completed.
+ * Posts to fis-complete-action, updates GCS and creates a Salesforce Task.
+ */
+export async function completeAction(actionId, notes = '') {
+  const r = await fetch(COMPLETE_ACTION_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action_id: actionId, notes }),
+  })
+  if (!r.ok) {
+    let msg = `Complete failed: ${r.status}`
+    try { const e = await r.json(); msg = e.message || msg } catch {}
+    throw new Error(msg)
+  }
   return r.json()
 }
 

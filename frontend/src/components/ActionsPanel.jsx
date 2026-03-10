@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { formatCurrency, formatDate, daysSince, classifyTier } from '../utils/tiers.js'
+import { completeAction } from '../utils/api.js'
 
 const PRIORITY_LABEL = { 1: 'Urgent', 2: 'High', 3: 'Medium', 4: 'Low' }
 const PRIORITY_COLOR = {
@@ -141,15 +142,40 @@ export default function ActionsPanel({ actions, donors }) {
 }
 
 function ActionCard({ action, expanded, onToggle, onComplete, completed }) {
-  const tier = classifyTier(0)  // tier comes from action.donor_tier
+  const [confirming, setConfirming] = useState(false)
+  const [notes, setNotes] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+
   const priorityClass = PRIORITY_COLOR[action.priority] || PRIORITY_COLOR[3]
   const dueDate = action.due_date ? new Date(action.due_date) : null
   const isOverdue = dueDate && dueDate < new Date() && !completed
   const icon = ACTIVITY_ICON[action.activity] || '📋'
 
+  async function handleConfirm() {
+    setLoading(true)
+    setError(null)
+    try {
+      await completeAction(action.action_id, notes)
+      onComplete()
+      setConfirming(false)
+      setNotes('')
+    } catch (e) {
+      setError(e.message || 'Something went wrong')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function handleCancel() {
+    setConfirming(false)
+    setNotes('')
+    setError(null)
+  }
+
   return (
     <div className={`bg-white rounded-xl border transition-all ${
-      isOverdue ? 'border-red-200' : 'border-gray-200'
+      isOverdue ? 'border-red-200' : confirming ? 'border-emerald-200' : 'border-gray-200'
     } ${completed ? 'opacity-50' : ''}`}>
       <div className="p-4 flex items-start gap-4">
         {/* Icon */}
@@ -192,26 +218,60 @@ function ActionCard({ action, expanded, onToggle, onComplete, completed }) {
             </span>
           )}
           <div className="flex items-center gap-2">
-            {!completed && (
+            {!completed && !confirming && (
               <button
-                onClick={onComplete}
+                onClick={() => setConfirming(true)}
                 className="text-xs text-emerald-600 hover:text-emerald-700 border border-emerald-200 hover:border-emerald-400 px-2.5 py-1 rounded-lg transition-colors"
               >
                 Mark done
               </button>
             )}
-            <button
-              onClick={onToggle}
-              className="text-xs text-gray-400 hover:text-gray-600 px-2.5 py-1 rounded-lg border border-gray-200 hover:border-gray-400 transition-colors"
-            >
-              {expanded ? 'Less' : 'Details'}
-            </button>
+            {!confirming && (
+              <button
+                onClick={onToggle}
+                className="text-xs text-gray-400 hover:text-gray-600 px-2.5 py-1 rounded-lg border border-gray-200 hover:border-gray-400 transition-colors"
+              >
+                {expanded ? 'Less' : 'Details'}
+              </button>
+            )}
           </div>
         </div>
       </div>
 
+      {/* Inline confirm */}
+      {confirming && (
+        <div className="px-4 pb-4 pt-3 border-t border-emerald-100 bg-emerald-50/40 rounded-b-xl">
+          <p className="text-xs font-semibold text-emerald-700 mb-2">Log this activity as completed?</p>
+          <textarea
+            value={notes}
+            onChange={e => setNotes(e.target.value)}
+            placeholder="Optional notes (outcome, next steps...)"
+            rows={2}
+            disabled={loading}
+            className="w-full text-xs border border-gray-200 rounded-lg p-2 resize-none focus:outline-none focus:border-emerald-400 disabled:opacity-50 bg-white"
+          />
+          {error && <p className="text-xs text-red-600 mt-1">{error}</p>}
+          <div className="flex gap-2 mt-2">
+            <button
+              onClick={handleConfirm}
+              disabled={loading}
+              className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg font-medium transition-colors disabled:opacity-50"
+            >
+              {loading ? 'Saving...' : 'Confirm & log to Salesforce'}
+            </button>
+            <button
+              onClick={handleCancel}
+              disabled={loading}
+              className="text-xs border border-gray-200 text-gray-600 hover:border-gray-400 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Expanded detail */}
-      {expanded && (
+      {expanded && !confirming && (
         <div className="px-4 pb-4 pt-0 border-t border-gray-100 mt-1">
           {action.ai_narrative && (
             <div className="bg-teal/5 rounded-lg p-3 mt-3">

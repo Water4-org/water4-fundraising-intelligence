@@ -1,7 +1,7 @@
 #!/bin/bash
 # deploy.sh — Deploy all FIS Cloud Functions to GCP
 # Usage: ./deploy.sh [function_name]
-#   function_name: sf_sync | claude_analysis | action_engine | all (default: all)
+#   function_name: sf_sync | claude_analysis | action_engine | complete_action | all (default: all)
 set -e
 
 PROJECT="water4-org"
@@ -77,6 +77,25 @@ fi
 if [ "$TARGET" = "action_engine" ] || [ "$TARGET" = "all" ]; then
   prep_source "backend/action_engine"
   deploy_function "fis-action-engine" "generate_actions" "backend/action_engine" "0 4 * * *" "512MB"
+fi
+
+if [ "$TARGET" = "complete_action" ] || [ "$TARGET" = "all" ]; then
+  prep_source "backend/complete_action"
+  echo "Deploying fis-complete-action (public)..."
+  gcloud functions deploy "fis-complete-action" \
+    --gen2 \
+    --project="$PROJECT" \
+    --region="$REGION" \
+    --runtime="$RUNTIME" \
+    --source="backend/complete_action" \
+    --entry-point="complete_action" \
+    --trigger-http \
+    --allow-unauthenticated \
+    --memory="256MB" \
+    --timeout=60s \
+    --set-env-vars="GCP_PROJECT=$PROJECT,SHEETS_DISABLED=1" \
+    --service-account="fis-cloud-functions@${PROJECT}.iam.gserviceaccount.com"
+  echo "  ✅ fis-complete-action deployed (public)"
 fi
 
 echo ""
