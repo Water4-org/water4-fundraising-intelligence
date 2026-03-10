@@ -230,23 +230,127 @@ def fetch_campaigns(sf):
 
 
 def generate_rule_based_actions(donors):
-    """Generate basic action queue from donor data without Claude (no API key needed locally)."""
+    """
+    Generate the annual stewardship action queue from donor data.
+
+    Each tier follows a calendar-based outreach journey keyed on days since last gift:
+
+    Transformational ($100K+)
+      0-5d:   Handwritten thank-you letter
+      6-45d:  30-day impact call
+      46-120d: Quarterly cultivation meeting
+      121-210d: Field visit invitation
+      211-300d: Annual giving conversation (meeting)
+      301-365d: Lapse recovery call (urgent)
+      365d+:  Urgent lapse recovery call
+
+    Leadership ($25K-$99,999)
+      0-5d:   Handwritten thank-you letter
+      6-75d:  60-day impact call
+      76-180d: Stewardship check-in call
+      181-300d: Annual giving conversation (meeting)
+      301d+:  Lapse recovery call (urgent)
+
+    Major ($10K-$24,999)
+      0-5d:   Handwritten thank-you letter
+      6-105d: 90-day check-in call
+      106-270d: Send impact report
+      271-365d: Annual giving conversation (meeting)
+      365d+:  Lapse recovery call
+
+    Mid-Level ($5K-$9,999)
+      0-14d:  Thank-you call
+      150-270d: Mid-year impact report
+      271-365d: Annual ask call
+      365d+:  Lapse recovery call
+
+    Donor ($1K-$4,999)
+      0-14d:  Thank-you email
+      270-365d: Annual ask email
+      365d+:  Lapse recovery email
+
+    Friend ($1-$999)
+      270d+:  Annual appeal email
+
+    All tiers: upgrade ask if at 70%+ of next tier threshold
+    All tiers: recurring gift thank-you 14 days before next payment
+    """
     now = datetime.now(timezone.utc)
     import uuid
 
-    PRI = {
-        "transformational": 1, "leadership": 1,
-        "major": 2, "mid_level": 2, "donor": 3, "friend": 4,
+    # Stewardship calendar: tier → list of steps
+    # Each step: (day_min, day_max, action_type, activity, label, priority, due_days, ask_multiplier)
+    # ask_multiplier: None = no ask, float = multiplier of last_fy for the ask amount
+    CALENDAR = {
+        "transformational": [
+            (0,   5,   "gift_thank_you",  "handwritten_note", "Handwritten Thank-You Letter",      1,  3,  None),
+            (6,   45,  "impact_followup", "call",             "30-Day Impact Call",                1,  3,  None),
+            (46,  120, "checkin_90day",   "meeting",          "Quarterly Cultivation Meeting",     1,  7,  None),
+            (121, 210, "field_visit",     "field_visit",      "Field Visit Invitation",            1,  14, None),
+            (211, 300, "annual_ask",      "meeting",          "Annual Giving Conversation",        1,  14, 1.0),
+            (301, 365, "lapse_outreach",  "call",             "Lapse Recovery Call",               1,  5,  1.0),
+            (366, 9999,"lapse_outreach",  "call",             "Urgent Lapse Recovery Call",        1,  3,  1.0),
+        ],
+        "leadership": [
+            (0,   5,   "gift_thank_you",  "handwritten_note", "Handwritten Thank-You Letter",      1,  3,  None),
+            (6,   75,  "impact_followup", "call",             "60-Day Impact Call",                1,  5,  None),
+            (76,  180, "checkin_90day",   "call",             "Stewardship Check-In Call",         2,  7,  None),
+            (181, 300, "annual_ask",      "meeting",          "Annual Giving Conversation",        2,  14, 1.0),
+            (301, 9999,"lapse_outreach",  "call",             "Lapse Recovery Call",               1,  5,  1.0),
+        ],
+        "major": [
+            (0,   5,   "gift_thank_you",  "handwritten_note", "Handwritten Thank-You Letter",      2,  5,  None),
+            (6,   105, "checkin_90day",   "call",             "90-Day Check-In Call",              2,  7,  None),
+            (106, 270, "impact_report",   "impact_report",    "Send Impact Report",                2,  14, None),
+            (271, 365, "annual_ask",      "meeting",          "Annual Giving Conversation",        2,  14, 1.0),
+            (366, 9999,"lapse_outreach",  "call",             "Lapse Recovery Call",               2,  7,  1.0),
+        ],
+        "mid_level": [
+            (0,   14,  "gift_thank_you",  "call",             "Thank-You Call",                   3,  7,  None),
+            (150, 270, "impact_report",   "impact_report",    "Mid-Year Impact Report",            3,  14, None),
+            (271, 365, "annual_ask",      "call",             "Annual Ask Call",                   3,  14, 1.0),
+            (366, 9999,"lapse_outreach",  "call",             "Lapse Recovery Call",               3,  14, 1.0),
+        ],
+        "donor": [
+            (0,   14,  "gift_thank_you",  "email",            "Thank-You Email",                  3,  5,  None),
+            (270, 365, "annual_ask",      "email",            "Annual Ask Email",                  4,  21, 1.0),
+            (366, 9999,"lapse_outreach",  "email",            "Lapse Recovery Email",              4,  21, 1.0),
+        ],
+        "friend": [
+            (270, 9999,"annual_ask",      "email",            "Annual Appeal Email",               4,  30, None),
+        ],
     }
 
+    def make_action(atype, activity, label, priority, due_days, donor, tier, ask=None, reason=""):
+        return {
+            "action_id":      f"A{uuid.uuid4().hex[:8].upper()}",
+            "created_at":     now.strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "due_date":       (now + timedelta(days=due_days)).strftime("%Y-%m-%d"),
+            "priority":       priority,
+            "action_type":    atype,
+            "activity":       activity,
+            "label":          label,
+            "gift_officer":   donor.get("gift_officer", "Unassigned"),
+            "donor_name":     donor.get("full_name", ""),
+            "donor_sf_id":    donor.get("sf_id", ""),
+            "donor_tier":     tier,
+            "donor_ai_score": donor.get("ai_score"),
+            "ask_amount":     ask,
+            "reason":         reason,
+            "ai_narrative":   donor.get("ai_narrative", ""),
+            "status":         "pending",
+            "completed_at":   "",
+            "notes":          "",
+        }
+
     actions = []
+
     for d in donors:
         total   = float(d.get("total_giving") or 0)
         this_fy = float(d.get("giving_this_fy") or 0)
         last_fy = float(d.get("giving_last_fy") or 0)
         best_yr = max(this_fy, last_fy)
         tier    = classify_tier(best_yr or total / max(d.get("gift_count", 1), 1))
-        pri     = PRI.get(tier, 4)
 
         # Days since last gift
         days = None
@@ -259,109 +363,33 @@ def generate_rule_based_actions(donors):
             except Exception:
                 pass
 
-        # Lapse outreach: hasn't given this FY and it's been 300+ days
-        if this_fy == 0 and last_fy > 0 and days and days > 300 and tier in ("transformational","leadership","major","mid_level"):
-            next_tier_min = {
-                "transformational": 100000, "leadership": 25000,
-                "major": 10000, "mid_level": 5000,
-            }.get(tier, 1000)
-            ask = int(max(last_fy * 1.0, next_tier_min * 0.85))
-            actions.append({
-                "action_id":    f"A{uuid.uuid4().hex[:8].upper()}",
-                "created_at":   now.strftime("%Y-%m-%d %H:%M:%S UTC"),
-                "due_date":     (now + timedelta(days=7)).strftime("%Y-%m-%d"),
-                "priority":     min(pri, 2),
-                "action_type":  "lapse_outreach",
-                "activity":     "call",
-                "label":        "Lapse Recovery Call",
-                "gift_officer": d.get("gift_officer", "Unassigned"),
-                "donor_name":   d.get("full_name", ""),
-                "donor_sf_id":  d.get("sf_id", ""),
-                "donor_tier":   tier,
-                "donor_ai_score": None,
-                "ask_amount":   ask,
-                "reason":       f"{days} days since last gift — no FY gift yet (last FY: ${last_fy:,.0f})",
-                "ai_narrative": "",
-                "status":       "pending",
-                "completed_at": "",
-                "notes":        "",
-            })
+        # ── Stewardship calendar step ────────────────────────────────────────
+        if days is not None:
+            for (dmin, dmax, atype, activity, label, pri, due, ask_mult) in CALENDAR.get(tier, []):
+                if dmin <= days <= dmax:
+                    ask = int(max(last_fy, best_yr) * ask_mult) if ask_mult else None
+                    actions.append(make_action(
+                        atype, activity, label, pri, due, d, tier, ask=ask,
+                        reason=f"{days} days since last gift — {label.lower()}",
+                    ))
+                    break  # one calendar step per donor per sync
 
-        # Upgrade radar: at 70%+ of next tier
+        # ── Upgrade ask (independent of calendar) ────────────────────────────
         tier_thresholds = [1000, 5000, 10000, 25000, 100000, 250000]
         for threshold in tier_thresholds:
             if best_yr > 0 and best_yr >= threshold * 0.7 and best_yr < threshold:
                 gap = threshold - best_yr
                 ask = int(threshold * 0.9)
-                actions.append({
-                    "action_id":    f"A{uuid.uuid4().hex[:8].upper()}",
-                    "created_at":   now.strftime("%Y-%m-%d %H:%M:%S UTC"),
-                    "due_date":     (now + timedelta(days=21)).strftime("%Y-%m-%d"),
-                    "priority":     pri,
-                    "action_type":  "upgrade_ask",
-                    "activity":     "meeting",
-                    "label":        "Upgrade Cultivation Ask",
-                    "gift_officer": d.get("gift_officer", "Unassigned"),
-                    "donor_name":   d.get("full_name", ""),
-                    "donor_sf_id":  d.get("sf_id", ""),
-                    "donor_tier":   tier,
-                    "donor_ai_score": None,
-                    "ask_amount":   ask,
-                    "reason":       f"${gap:,.0f} from next tier — suggest ${ask:,} ask",
-                    "ai_narrative": "",
-                    "status":       "pending",
-                    "completed_at": "",
-                    "notes":        "",
-                })
+                actions.append(make_action(
+                    "upgrade_ask", "meeting", "Upgrade Cultivation Ask",
+                    {"transformational": 1, "leadership": 1, "major": 2,
+                     "mid_level": 2, "donor": 3, "friend": 4}.get(tier, 3),
+                    21, d, tier, ask=ask,
+                    reason=f"${gap:,.0f} from {tier.replace('_','-')} → next tier — suggest ${ask:,} ask",
+                ))
                 break
 
-        # Thank-you handwritten letter: gift received in the last 30 days, $10K+
-        if days is not None and days <= 30 and float(d.get("last_gift_amount") or 0) >= 10000:
-            actions.append({
-                "action_id":    f"A{uuid.uuid4().hex[:8].upper()}",
-                "created_at":   now.strftime("%Y-%m-%d %H:%M:%S UTC"),
-                "due_date":     (now + timedelta(days=5)).strftime("%Y-%m-%d"),
-                "priority":     min(pri, 2),
-                "action_type":  "gift_thank_you",
-                "activity":     "handwritten_note",
-                "label":        "Handwritten Thank-You Letter",
-                "gift_officer": d.get("gift_officer", "Unassigned"),
-                "donor_name":   d.get("full_name", ""),
-                "donor_sf_id":  d.get("sf_id", ""),
-                "donor_tier":   tier,
-                "donor_ai_score": d.get("ai_score"),
-                "ask_amount":   None,
-                "reason":       f"Gift of ${d.get('last_gift_amount', 0):,.0f} received {days} days ago — send handwritten thank-you",
-                "ai_narrative": d.get("ai_narrative", ""),
-                "status":       "pending",
-                "completed_at": "",
-                "notes":        "",
-            })
-
-        # 90-day check-in: all $10K+ donors regardless of other actions
-        if best_yr >= 10000 and days is not None and days > 90:
-            actions.append({
-                "action_id":    f"A{uuid.uuid4().hex[:8].upper()}",
-                "created_at":   now.strftime("%Y-%m-%d %H:%M:%S UTC"),
-                "due_date":     (now + timedelta(days=7)).strftime("%Y-%m-%d"),
-                "priority":     pri,
-                "action_type":  "checkin_90day",
-                "activity":     "call",
-                "label":        "90-Day Check-In Call",
-                "gift_officer": d.get("gift_officer", "Unassigned"),
-                "donor_name":   d.get("full_name", ""),
-                "donor_sf_id":  d.get("sf_id", ""),
-                "donor_tier":   tier,
-                "donor_ai_score": d.get("ai_score"),
-                "ask_amount":   None,
-                "reason":       f"{days} days since last gift — scheduled 90-day stewardship check-in",
-                "ai_narrative": d.get("ai_narrative", ""),
-                "status":       "pending",
-                "completed_at": "",
-                "notes":        "",
-            })
-
-        # Recurring gift coming up
+        # ── Recurring gift thank-you (14 days before next payment) ───────────
         if d.get("is_recurring") and d.get("rd_next_payment"):
             try:
                 np = datetime.fromisoformat(str(d["rd_next_payment"]).replace("Z", "+00:00"))
@@ -369,30 +397,14 @@ def generate_rule_based_actions(donors):
                     np = np.replace(tzinfo=timezone.utc)
                 days_to = (np - now).days
                 if 0 <= days_to <= 14:
-                    actions.append({
-                        "action_id":    f"A{uuid.uuid4().hex[:8].upper()}",
-                        "created_at":   now.strftime("%Y-%m-%d %H:%M:%S UTC"),
-                        "due_date":     np.strftime("%Y-%m-%d"),
-                        "priority":     3,
-                        "action_type":  "recurring_ack",
-                        "activity":     "handwritten_note",
-                        "label":        "Recurring Gift Thank-You",
-                        "gift_officer": d.get("gift_officer", "Unassigned"),
-                        "donor_name":   d.get("full_name", ""),
-                        "donor_sf_id":  d.get("sf_id", ""),
-                        "donor_tier":   tier,
-                        "donor_ai_score": None,
-                        "ask_amount":   None,
-                        "reason":       f"Recurring gift of ${d.get('rd_amount', 0):,.0f} due in {days_to} days",
-                        "ai_narrative": "",
-                        "status":       "pending",
-                        "completed_at": "",
-                        "notes":        "",
-                    })
+                    actions.append(make_action(
+                        "recurring_ack", "handwritten_note", "Recurring Gift Thank-You",
+                        3, days_to, d, tier,
+                        reason=f"Recurring gift of ${d.get('rd_amount', 0):,.0f} due in {days_to} days",
+                    ))
             except Exception:
                 pass
 
-    # Sort by priority
     actions.sort(key=lambda a: (a["priority"], a["donor_name"]))
     return actions
 

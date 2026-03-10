@@ -29,24 +29,6 @@ from shared.sheets import FISSheets
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Priority tiers (lower number = higher priority)
-PRI_URGENT  = 1   # Lapsing major/leadership donor
-PRI_HIGH    = 2   # Upgrade candidate, recent lapse
-PRI_MEDIUM  = 3   # Routine cultivation
-PRI_LOW     = 4   # Mass stewardship, informational
-
-ACTION_TYPES = {
-    "lapse_outreach":      {"label": "Lapse Recovery Call",      "activity": "call"},
-    "upgrade_ask":         {"label": "Upgrade Cultivation Ask",   "activity": "meeting"},
-    "stewardship_call":    {"label": "Stewardship Check-in",     "activity": "call"},
-    "impact_report":       {"label": "Send Impact Report",       "activity": "impact_report"},
-    "recurring_ack":       {"label": "Recurring Gift Thank-You", "activity": "handwritten_note"},
-    "campaign_followup":   {"label": "Campaign Follow-Up",       "activity": "email"},
-    "major_cultivation":   {"label": "Major Donor Cultivation",  "activity": "meeting"},
-    "gift_thank_you":      {"label": "Handwritten Thank-You",    "activity": "handwritten_note"},
-    "checkin_90day":       {"label": "90-Day Check-In Call",     "activity": "call"},
-}
-
 # Tier definitions (annual giving thresholds)
 TIER_ORDER = ["transformational", "leadership", "major", "mid_level", "donor", "friend"]
 TIER_MIN   = {
@@ -64,6 +46,50 @@ def _classify_tier(amount: float) -> str:
         if amount >= TIER_MIN[tier]:
             return tier
     return "friend"
+
+
+# Annual stewardship calendar: tier → list of steps
+# Each step: (day_min, day_max, action_type, activity, label, priority, due_days, ask_multiplier)
+# ask_multiplier: None = informational, float = multiplier of best annual year for ask amount
+CALENDAR = {
+    "transformational": [
+        (0,   5,   "gift_thank_you",  "handwritten_note", "Handwritten Thank-You Letter",   1,  3,  None),
+        (6,   45,  "impact_followup", "call",             "30-Day Impact Call",              1,  3,  None),
+        (46,  120, "checkin_90day",   "meeting",          "Quarterly Cultivation Meeting",   1,  7,  None),
+        (121, 210, "field_visit",     "field_visit",      "Field Visit Invitation",          1,  14, None),
+        (211, 300, "annual_ask",      "meeting",          "Annual Giving Conversation",      1,  14, 1.0),
+        (301, 365, "lapse_outreach",  "call",             "Lapse Recovery Call",             1,  5,  1.0),
+        (366, 9999,"lapse_outreach",  "call",             "Urgent Lapse Recovery Call",      1,  3,  1.0),
+    ],
+    "leadership": [
+        (0,   5,   "gift_thank_you",  "handwritten_note", "Handwritten Thank-You Letter",   1,  3,  None),
+        (6,   75,  "impact_followup", "call",             "60-Day Impact Call",              1,  5,  None),
+        (76,  180, "checkin_90day",   "call",             "Stewardship Check-In Call",       2,  7,  None),
+        (181, 300, "annual_ask",      "meeting",          "Annual Giving Conversation",      2,  14, 1.0),
+        (301, 9999,"lapse_outreach",  "call",             "Lapse Recovery Call",             1,  5,  1.0),
+    ],
+    "major": [
+        (0,   5,   "gift_thank_you",  "handwritten_note", "Handwritten Thank-You Letter",   2,  5,  None),
+        (6,   105, "checkin_90day",   "call",             "90-Day Check-In Call",            2,  7,  None),
+        (106, 270, "impact_report",   "impact_report",    "Send Impact Report",              2,  14, None),
+        (271, 365, "annual_ask",      "meeting",          "Annual Giving Conversation",      2,  14, 1.0),
+        (366, 9999,"lapse_outreach",  "call",             "Lapse Recovery Call",             2,  7,  1.0),
+    ],
+    "mid_level": [
+        (0,   14,  "gift_thank_you",  "call",             "Thank-You Call",                  3,  7,  None),
+        (150, 270, "impact_report",   "impact_report",    "Mid-Year Impact Report",           3,  14, None),
+        (271, 365, "annual_ask",      "call",             "Annual Ask Call",                  3,  14, 1.0),
+        (366, 9999,"lapse_outreach",  "call",             "Lapse Recovery Call",              3,  14, 1.0),
+    ],
+    "donor": [
+        (0,   14,  "gift_thank_you",  "email",            "Thank-You Email",                  3,  5,  None),
+        (270, 365, "annual_ask",      "email",            "Annual Ask Email",                  4,  21, 1.0),
+        (366, 9999,"lapse_outreach",  "email",            "Lapse Recovery Email",              4,  21, 1.0),
+    ],
+    "friend": [
+        (270, 9999,"annual_ask",      "email",            "Annual Appeal Email",               4,  30, None),
+    ],
+}
 
 
 @functions_framework.http
@@ -109,122 +135,101 @@ def generate_actions(request):
 
 
 def _generate_donor_actions(d: dict, now: datetime) -> list[dict]:
-    """Generate all applicable actions for one donor."""
+    """Generate all applicable actions for one donor using the annual stewardship calendar."""
     actions = []
 
-    total = float(d.get("total_giving") or 0)
-    this_fy = float(d.get("giving_this_fy") or 0)
-    last_fy = float(d.get("giving_last_fy") or 0)
-    gift_count = int(d.get("gift_count") or 0)
-    lapse_risk = float(d.get("lapse_risk") or 0.5)
-    upgrade_prop = float(d.get("upgrade_propensity") or 0.3)
-    ai_score = d.get("ai_score")
-    is_recurring = bool(d.get("is_recurring"))
+    this_fy    = float(d.get("giving_this_fy") or 0)
+    last_fy    = float(d.get("giving_last_fy") or 0)
+    best_yr    = max(this_fy, last_fy)
+    gift_count = max(int(d.get("gift_count") or 0), 1)
+    total      = float(d.get("total_giving") or 0)
+    tier       = _classify_tier(best_yr or total / gift_count)
+
+    # Days since last gift
+    days = None
     last_gift_date = d.get("last_gift_date", "")
-    gift_officer = d.get("gift_officer", "Unassigned")
-    name = d.get("full_name", "Unknown")
-    sf_id = d.get("sf_id", "")
-
-    current_tier = _classify_tier(max(this_fy, last_fy, total / max(gift_count, 1)))
-
-    # Calculate days since last gift
-    days_since_gift = None
     if last_gift_date:
         try:
             lg = datetime.fromisoformat(last_gift_date.replace("Z", "+00:00"))
             if lg.tzinfo is None:
                 lg = lg.replace(tzinfo=timezone.utc)
-            days_since_gift = (now - lg).days
+            days = (now - lg).days
         except Exception:
             pass
 
-    # ── Action: Lapse Recovery ────────────────────────────────────────────────
-    if lapse_risk >= 0.6 and days_since_gift and days_since_gift > 300:
-        tier_weight = {"transformational": PRI_URGENT, "leadership": PRI_URGENT,
-                       "major": PRI_HIGH, "mid_level": PRI_HIGH}.get(current_tier, PRI_MEDIUM)
-        actions.append(_make_action(
-            action_type="lapse_outreach",
-            donor=d,
-            priority=tier_weight,
-            reason=f"Lapse risk {lapse_risk:.0%} — {days_since_gift} days since last gift",
-            due_days=7,
-        ))
+    # ── Stewardship calendar step ────────────────────────────────────────────
+    if days is not None:
+        for (dmin, dmax, atype, activity, label, pri, due, ask_mult) in CALENDAR.get(tier, []):
+            if dmin <= days <= dmax:
+                ask = int(best_yr * ask_mult) if ask_mult else None
+                actions.append(_make_action(
+                    action_type=atype,
+                    donor=d,
+                    priority=pri,
+                    reason=f"{days} days since last gift — {label.lower()}",
+                    due_days=due,
+                    activity_override=activity,
+                    label_override=label,
+                    ask_override=ask,
+                ))
+                break  # one calendar step per donor per sync
 
-    # ── Action: Upgrade Cultivation ───────────────────────────────────────────
-    elif upgrade_prop >= 0.6 and current_tier in ("mid_level", "donor", "major", "leadership"):
-        ask = int(d.get("ask_amount") or 0)
-        next_tier_label = TIER_ORDER[max(0, TIER_ORDER.index(current_tier) - 1)]
-        actions.append(_make_action(
-            action_type="upgrade_ask",
-            donor=d,
-            priority=PRI_HIGH,
-            reason=f"Upgrade propensity {upgrade_prop:.0%} — suggest ${ask:,} ask for {next_tier_label}",
-            due_days=14,
-        ))
-
-    # ── Action: Major Donor Cultivation ──────────────────────────────────────
-    elif current_tier in ("transformational", "leadership", "major") and lapse_risk < 0.5:
-        if not days_since_gift or days_since_gift > 90:
+    # ── Upgrade ask (independent of calendar) ───────────────────────────────
+    TIER_THRESHOLDS = [1000, 5000, 10000, 25000, 100000, 250000]
+    for threshold in TIER_THRESHOLDS:
+        if best_yr > 0 and best_yr >= threshold * 0.7 and best_yr < threshold:
+            gap = threshold - best_yr
+            ask = int(threshold * 0.9)
+            upgrade_pri = {"transformational": 1, "leadership": 1, "major": 2,
+                           "mid_level": 2, "donor": 3, "friend": 4}.get(tier, 3)
             actions.append(_make_action(
-                action_type="major_cultivation",
+                action_type="upgrade_ask",
                 donor=d,
-                priority=PRI_MEDIUM,
-                reason=f"Major donor cultivation — {current_tier} tier, {days_since_gift or 'unknown'} days since contact",
-                due_days=30,
+                priority=upgrade_pri,
+                reason=f"${gap:,.0f} from {tier.replace('_', '-')} → next tier — suggest ${ask:,} ask",
+                due_days=21,
+                activity_override="meeting",
+                label_override="Upgrade Cultivation Ask",
+                ask_override=ask,
             ))
+            break
 
-    # ── Action: Handwritten Thank-You Letter ─────────────────────────────────
-    last_gift_amount = float(d.get("last_gift_amount") or 0)
-    if days_since_gift is not None and days_since_gift <= 30 and last_gift_amount >= 10000:
-        actions.append(_make_action(
-            action_type="gift_thank_you",
-            donor=d,
-            priority=min({"transformational": PRI_URGENT, "leadership": PRI_URGENT,
-                          "major": PRI_HIGH}.get(current_tier, PRI_MEDIUM), PRI_HIGH),
-            reason=f"Gift of ${last_gift_amount:,.0f} received {days_since_gift} days ago — send handwritten thank-you",
-            due_days=5,
-        ))
-
-    # ── Action: 90-Day Check-In (all $10K+ donors) ────────────────────────────
-    best_yr = max(this_fy, last_fy)
-    if best_yr >= 10000 and (days_since_gift is None or days_since_gift > 90):
-        actions.append(_make_action(
-            action_type="checkin_90day",
-            donor=d,
-            priority=PRI_MEDIUM,
-            reason=f"{days_since_gift or 'unknown'} days since last gift — scheduled 90-day stewardship check-in",
-            due_days=7,
-        ))
-
-    # ── Action: Recurring Gift Acknowledgement ────────────────────────────────
-    if is_recurring:
-        rd_next = d.get("rd_next_payment", "")
-        if rd_next:
-            try:
-                next_pay = datetime.fromisoformat(rd_next)
-                if next_pay.tzinfo is None:
-                    next_pay = next_pay.replace(tzinfo=timezone.utc)
-                days_to_payment = (next_pay - now).days
-                if 0 <= days_to_payment <= 14:
-                    actions.append(_make_action(
-                        action_type="recurring_ack",
-                        donor=d,
-                        priority=PRI_MEDIUM,
-                        reason=f"Recurring gift of ${d.get('rd_amount', 0):,.0f} due in {days_to_payment} days",
-                        due_days=days_to_payment,
-                    ))
-            except Exception:
-                pass
+    # ── Recurring gift thank-you (14 days before next payment) ──────────────
+    if d.get("is_recurring") and d.get("rd_next_payment"):
+        try:
+            next_pay = datetime.fromisoformat(str(d["rd_next_payment"]).replace("Z", "+00:00"))
+            if next_pay.tzinfo is None:
+                next_pay = next_pay.replace(tzinfo=timezone.utc)
+            days_to = (next_pay - now).days
+            if 0 <= days_to <= 14:
+                actions.append(_make_action(
+                    action_type="recurring_ack",
+                    donor=d,
+                    priority=3,
+                    reason=f"Recurring gift of ${d.get('rd_amount', 0):,.0f} due in {days_to} days",
+                    due_days=days_to,
+                    activity_override="handwritten_note",
+                    label_override="Recurring Gift Thank-You",
+                ))
+        except Exception:
+            pass
 
     return actions
 
 
-def _make_action(action_type: str, donor: dict, priority: int, reason: str, due_days: int) -> dict:
+def _make_action(
+    action_type: str,
+    donor: dict,
+    priority: int,
+    reason: str,
+    due_days: int,
+    activity_override: str = None,
+    label_override: str = None,
+    ask_override=None,
+) -> dict:
     """Create a standardized action dict."""
     now = datetime.now(timezone.utc)
     due_date = (now + timedelta(days=due_days)).strftime("%Y-%m-%d")
-    meta = ACTION_TYPES.get(action_type, {"label": action_type, "activity": "call"})
-    ask = donor.get("ask_amount")
 
     return {
         "action_id":      f"A{uuid.uuid4().hex[:8].upper()}",
@@ -232,8 +237,8 @@ def _make_action(action_type: str, donor: dict, priority: int, reason: str, due_
         "due_date":       due_date,
         "priority":       priority,
         "action_type":    action_type,
-        "activity":       meta["activity"],
-        "label":          meta["label"],
+        "activity":       activity_override or "call",
+        "label":          label_override or action_type.replace("_", " ").title(),
         "gift_officer":   donor.get("gift_officer", "Unassigned"),
         "donor_name":     donor.get("full_name", "Unknown"),
         "donor_sf_id":    donor.get("sf_id", ""),
@@ -242,7 +247,7 @@ def _make_action(action_type: str, donor: dict, priority: int, reason: str, due_
             float(donor.get("giving_last_fy") or 0),
         )),
         "donor_ai_score": donor.get("ai_score"),
-        "ask_amount":     ask,
+        "ask_amount":     ask_override,
         "reason":         reason,
         "ai_narrative":   donor.get("ai_narrative", ""),
         "status":         "pending",

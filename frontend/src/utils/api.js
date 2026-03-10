@@ -9,7 +9,7 @@
  *   VITE_API_BASE_URL  — Cloud Function base URL for on-demand refresh endpoints
  */
 
-const GCS_BASE  = import.meta.env.VITE_GCS_BASE_URL  || '/sample-data'
+const GCS_BASE  = import.meta.env.VITE_GCS_BASE_URL  || `${import.meta.env.BASE_URL}sample-data`
 const API_BASE  = import.meta.env.VITE_API_BASE_URL   || null
 
 export async function fetchDonors() {
