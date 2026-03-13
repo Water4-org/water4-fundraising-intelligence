@@ -49,6 +49,7 @@ SESSION_HOURS       = 8
 
 STATIC_EXTENSIONS   = {".js", ".css", ".ico", ".png", ".svg", ".woff", ".woff2", ".map"}
 EXEMPT_PATHS        = {"/auth/login", "/auth/callback", "/auth/logout", "/api/me"}
+ADMIN_EMAILS        = {"matt@water4.org", "matt.woll@water4.org", "mattwoll@water4.org"}
 
 # ── Session helpers ────────────────────────────────────────────────────────────
 
@@ -161,8 +162,10 @@ async def me(request: Request):
     s = _session(request)
     if not s:
         return JSONResponse({"authenticated": False}, status_code=401)
-    return JSONResponse({"authenticated": True, "email": s.get("email"), "name": s.get("name"),
-                         "picture": s.get("picture"), "sf_user_id": s.get("sf_user_id", "")})
+    email = s.get("email", "")
+    return JSONResponse({"authenticated": True, "email": email, "name": s.get("name"),
+                         "picture": s.get("picture"), "sf_user_id": s.get("sf_user_id", ""),
+                         "is_admin": email in ADMIN_EMAILS})
 
 # ── Auth middleware ────────────────────────────────────────────────────────────
 

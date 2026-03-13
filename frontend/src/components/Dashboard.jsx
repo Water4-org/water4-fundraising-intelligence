@@ -16,31 +16,41 @@ export default function Dashboard({ donors, campaigns, actions, lastRefresh, onR
     ? donors.find(d => d.gift_officer_id === currentUser.sf_user_id)?.gift_officer || 'all'
     : 'all'
 
-  const [selectedOfficer, setSelectedOfficer] = useState(myOfficerName)
+  const isAdmin = currentUser?.is_admin === true
+
+  // Non-admins are locked to their own officer view
+  const [selectedOfficer, setSelectedOfficer] = useState(
+    isAdmin ? myOfficerName : (myOfficerName !== 'all' ? myOfficerName : 'all')
+  )
 
   const urgentCount = actions.filter(a => a.priority <= 2 && a.status === 'pending').length
   const pendingCount = actions.filter(a => a.status === 'pending').length
 
   const officers = [...new Set(donors.map(d => d.gift_officer).filter(Boolean))].sort()
 
-  const TABS = [
+  const ALL_TABS = [
     { id: 'guide',     label: 'How It Works' },
-    { id: 'executive', label: 'Executive Dashboard' },
+    { id: 'executive', label: 'Executive Dashboard', adminOnly: true },
     { id: 'actions',   label: 'Action Queue',    badge: urgentCount || null, badgeColor: 'bg-red-500' },
     { id: 'donors',    label: `Donors (${donors.length})` },
     { id: 'pipeline',  label: 'Pipeline' },
     { id: 'campaigns', label: `Campaigns (${campaigns.length})` },
-    { id: 'portfolio', label: 'Portfolio View' },
-    { id: 'officers', label: 'Officers' },
+    { id: 'portfolio', label: 'Portfolio View', adminOnly: true },
+    { id: 'officers',  label: 'Officers', adminOnly: true },
   ]
 
-  const filteredActions = selectedOfficer === 'all'
-    ? actions
-    : actions.filter(a => a.gift_officer === selectedOfficer)
+  const TABS = ALL_TABS.filter(t => !t.adminOnly || isAdmin)
 
-  const filteredDonors = selectedOfficer === 'all'
+  // Non-admins are always locked to their own officer
+  const effectiveOfficer = isAdmin ? selectedOfficer : (myOfficerName !== 'all' ? myOfficerName : selectedOfficer)
+
+  const filteredActions = effectiveOfficer === 'all'
+    ? actions
+    : actions.filter(a => a.gift_officer === effectiveOfficer)
+
+  const filteredDonors = effectiveOfficer === 'all'
     ? donors
-    : donors.filter(d => d.gift_officer === selectedOfficer)
+    : donors.filter(d => d.gift_officer === effectiveOfficer)
 
   return (
     <div className="min-h-screen bg-cream flex flex-col">
@@ -103,7 +113,7 @@ export default function Dashboard({ donors, campaigns, actions, lastRefresh, onR
               </button>
             ))}
           </div>
-          {officers.length > 1 && activeTab !== 'guide' && (
+          {officers.length > 1 && activeTab !== 'guide' && isAdmin && (
             <div className="flex items-center gap-2 py-2">
               <span className="text-xs text-gray-400">Officer:</span>
               <select
@@ -116,6 +126,12 @@ export default function Dashboard({ donors, campaigns, actions, lastRefresh, onR
                   <option key={o} value={o}>{o}</option>
                 ))}
               </select>
+            </div>
+          )}
+          {!isAdmin && myOfficerName !== 'all' && activeTab !== 'guide' && (
+            <div className="flex items-center gap-2 py-2">
+              <span className="text-xs text-gray-400">Viewing:</span>
+              <span className="text-xs text-gray-700 font-medium">{myOfficerName}</span>
             </div>
           )}
         </div>
