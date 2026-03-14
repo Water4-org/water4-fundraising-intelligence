@@ -134,7 +134,7 @@ export default function PortfolioView({ donors, campaigns, actions }) {
       map[tier.id].count++
       map[tier.id].amount += d.giving_this_fy || 0
     }
-    return ['transformational','leadership','major','mid_level','donor','friend']
+    return ['transformational','leadership','major','mid_level','donor','prospect']
       .map(id => map[id])
       .filter(Boolean)
   }, [donors])

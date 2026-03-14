@@ -98,7 +98,7 @@ export default function DonorIntel({ donors, currentUser }) {
           className="border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 bg-white focus:outline-none focus:border-teal"
         >
           <option value="all">All Tiers</option>
-          {['transformational','leadership','major','mid_level','donor','friend'].map(t => (
+          {['transformational','leadership','major','mid_level','donor','prospect'].map(t => (
             <option key={t} value={t}>{t.replace('_', '-')}</option>
           ))}
         </select>

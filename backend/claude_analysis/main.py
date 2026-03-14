@@ -129,20 +129,29 @@ def analyze_donor(request):
     gcs = storage.Client()
     bucket = gcs.bucket(bucket_name)
 
-    donors = json.loads(bucket.blob("donors/latest.json").download_as_text())
+    try:
+        donors = json.loads(bucket.blob("donors/latest.json").download_as_text())
+    except Exception as e:
+        return {"error": f"Could not load donors: {e}"}, 500
+
     donor_map = {d["sf_id"]: d for d in donors}
     donor = donor_map.get(sf_id)
     if not donor:
         return {"error": f"Donor {sf_id} not found in cache"}, 404
 
-    results = _analyze_donor_batch(client, [donor])
-    analysis = results.get(sf_id, {})
-    donor_map[sf_id].update(analysis)
+    try:
+        results = _analyze_donor_batch(client, [donor])
+        analysis = results.get(sf_id, {})
+        donor_map[sf_id].update(analysis)
 
-    bucket.blob("donors/latest.json").upload_from_string(
-        json.dumps(list(donor_map.values()), default=str),
-        content_type="application/json"
-    )
+        bucket.blob("donors/latest.json").upload_from_string(
+            json.dumps(list(donor_map.values()), default=str),
+            content_type="application/json"
+        )
+    except Exception as e:
+        logger.error(f"analyze_donor failed for {sf_id}: {e}")
+        return {"error": f"Analysis failed: {e}"}, 500
+
     try:
         sheets.upsert_donor(donor_map[sf_id])
     except Exception as e:

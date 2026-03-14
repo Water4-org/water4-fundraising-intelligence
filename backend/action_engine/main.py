@@ -116,8 +116,12 @@ def generate_actions(request):
     now = datetime.now(timezone.utc)
 
     for d in donors:
-        donor_actions = _generate_donor_actions(d, now)
-        actions.extend(donor_actions)
+        try:
+            donor_actions = _generate_donor_actions(d, now)
+            actions.extend(donor_actions)
+        except Exception as e:
+            logger.error(f"Action generation failed for donor {d.get('sf_id', '?')}: {e}")
+            stats["errors"] = stats.get("errors", 0) + 1
 
     # Sort by priority then by ai_score descending (most engaged high-priority donors first)
     actions.sort(key=lambda a: (a["priority"], -float(a.get("donor_ai_score") or 0)))

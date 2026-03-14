@@ -2,12 +2,13 @@ import { useState } from 'react'
 import { formatCurrency, formatDate, daysSince, classifyTier } from '../utils/tiers.js'
 import { completeAction, updateStage, STAGES } from '../utils/api.js'
 
-const PRIORITY_LABEL = { 1: 'Urgent', 2: 'High', 3: 'Medium', 4: 'Low' }
+const PRIORITY_LABEL = { 1: 'Urgent', 2: 'High', 3: 'Medium', 4: 'Low', 5: 'Routine' }
 const PRIORITY_COLOR = {
   1: 'bg-red-100 text-red-700 border-red-200',
   2: 'bg-amber-100 text-amber-700 border-amber-200',
   3: 'bg-blue-100 text-blue-700 border-blue-200',
   4: 'bg-gray-100 text-gray-600 border-gray-200',
+  5: 'bg-gray-100 text-gray-400 border-gray-200',
 }
 const ACTIVITY_ICON = {
   call:             '📞',
@@ -16,6 +17,7 @@ const ACTIVITY_ICON = {
   handwritten_note: '✍️',
   impact_report:    '📊',
   field_visit:      '✈️',
+  research:         '🔍',
 }
 
 export default function ActionsPanel({ actions, donors, currentUser }) {
