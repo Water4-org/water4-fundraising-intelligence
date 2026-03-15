@@ -5,6 +5,9 @@ import {
   ResponsiveContainer, Legend, PieChart, Pie, Cell,
 } from 'recharts'
 
+// Grants staff — included in the system but excluded from gift officer metrics
+const GRANTS_STAFF = ['Matt Hangen', 'Wema Patience', 'Richard Moore']
+
 function TierBar({ tier, donors }) {
   const maxCount = Math.max(...donors.map(g => g.count), 1)
   return (
@@ -61,6 +64,7 @@ function OfficerSummary({ donors, actions }) {
     const map = {}
     for (const d of donors) {
       const o = d.gift_officer || 'Unassigned'
+      if (GRANTS_STAFF.includes(o)) continue
       if (!map[o]) map[o] = { name: o, donors: 0, totalGiving: 0, avgScore: 0, scores: [], pendingActions: 0 }
       map[o].donors++
       map[o].totalGiving += d.giving_this_fy || 0
@@ -153,6 +157,7 @@ export default function PortfolioView({ donors, campaigns, actions }) {
     const map = {}
     for (const d of donors) {
       const o = d.gift_officer || 'Unassigned'
+      if (GRANTS_STAFF.includes(o)) continue
       if (!map[o]) map[o] = { name: o, active: 0 }
       map[o].active++
     }

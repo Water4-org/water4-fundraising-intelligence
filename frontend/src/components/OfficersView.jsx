@@ -10,6 +10,9 @@ import {
 const TEAL = '#1B4D5C'
 const GOLD = '#C4963E'
 
+// Grants staff — included in the system but excluded from gift officer metrics
+const GRANTS_STAFF = ['Matt Hangen', 'Wema Patience', 'Richard Moore']
+
 function ChartTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null
   return (
@@ -233,6 +236,7 @@ export default function OfficersView({ donors, campaigns, actions }) {
     const map = {}
     for (const d of donors) {
       const o = d.gift_officer || 'Unassigned'
+      if (GRANTS_STAFF.includes(o)) continue
       if (!map[o]) map[o] = { name: o, donors: 0, thisFY: 0, lastFY: 0, scores: [], pendingActions: 0, completedActions: 0, highRisk: 0, upgradeReady: 0 }
       map[o].donors++
       map[o].thisFY += d.giving_this_fy || 0
