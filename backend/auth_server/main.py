@@ -50,6 +50,10 @@ SESSION_HOURS       = 8
 STATIC_EXTENSIONS   = {".js", ".css", ".ico", ".png", ".svg", ".woff", ".woff2", ".map"}
 EXEMPT_PATHS        = {"/auth/login", "/auth/callback", "/auth/logout", "/api/me"}
 ADMIN_EMAILS        = {"matt@water4.org", "matt.woll@water4.org", "mattwoll@water4.org"}
+DONOR_SERVICES_EMAIL = "ds.qualify@water4.org"
+
+# Name overrides: force specific display names regardless of Google profile
+NAME_OVERRIDES      = {DONOR_SERVICES_EMAIL: "Donor Services"}
 
 # ── Session helpers ────────────────────────────────────────────────────────────
 
@@ -141,7 +145,8 @@ async def callback(request: Request, code: str = None, error: str = None):
         )
 
     sf_id = _sf_user_id(email)
-    session = {"email": email, "name": info.get("name", ""), "picture": info.get("picture", ""), "sf_user_id": sf_id}
+    name = NAME_OVERRIDES.get(email, info.get("name", ""))
+    session = {"email": email, "name": name, "picture": info.get("picture", ""), "sf_user_id": sf_id}
     logger.info(f"Login: {email} (SF: {sf_id or 'not found'})")
 
     resp = RedirectResponse("/", status_code=302)
@@ -163,9 +168,11 @@ async def me(request: Request):
     if not s:
         return JSONResponse({"authenticated": False}, status_code=401)
     email = s.get("email", "")
-    return JSONResponse({"authenticated": True, "email": email, "name": s.get("name"),
+    name = NAME_OVERRIDES.get(email, s.get("name"))
+    return JSONResponse({"authenticated": True, "email": email, "name": name,
                          "picture": s.get("picture"), "sf_user_id": s.get("sf_user_id", ""),
-                         "is_admin": email in ADMIN_EMAILS})
+                         "is_admin": email in ADMIN_EMAILS,
+                         "is_donor_services": email == DONOR_SERVICES_EMAIL})
 
 # ── Auth middleware ────────────────────────────────────────────────────────────
 
